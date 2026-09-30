@@ -43,20 +43,26 @@ public class KThread {
      * create an idle thread as well.
      */
     public KThread() {
-	if (currentThread != null) { // user thread
-	    tcb = new TCB();
-	}	    
-	else {
-	    readyQueue = ThreadedKernel.scheduler.newThreadQueue(false);
-	    readyQueue.acquire(this);	    
+        if (currentThread != null) { // user thread
+            tcb = new TCB();
+        }	    
+        else {
+            readyQueue = ThreadedKernel.scheduler.newThreadQueue(false);
+            readyQueue.acquire(this);	    
 
-	    currentThread = this;
-	    tcb = TCB.currentTCB();
-	    name = "main";
-	    restoreState();
+            currentThread = this;
+            tcb = TCB.currentTCB();
+            name = "main";
+            restoreState();
 
-	    createIdleThread();
-	}
+            createIdleThread();
+        }
+
+        joinQueue = ThreadedKernel.scheduler.newThreadQueue(true);
+
+        boolean intStatus = Machine.interrupt().disable();
+        joinQueue.acquire(this);
+        Machine.interrupt().restore(intStatus);
     }
 
     /**
@@ -182,23 +188,25 @@ public class KThread {
      * delete this thread.
      */
     public static void finish() {
-	Lib.debug(dbgThread, "Finishing thread: " + currentThread.toString());
-	
-	Machine.interrupt().disable();
+        Lib.debug(dbgThread, "Finishing thread: " + currentThread.toString());
+        
+        Machine.interrupt().disable();
 
-    // insert your code here
-    // remove waiting Kthread one by one, put each in ready() (no need to do anything for ready function)
-    // warning: check for null
+        // remove waiting Kthread one by one, put each in ready() (no need to do anything for ready function)
+        // warning: check for null
+        KThread waitingThread;
+        while ((waitingThread = currentThread.joinQueue.nextThread()) != null) {
+            waitingThread.ready();
+        }
 
-	Machine.autoGrader().finishingCurrentThread();
+        Machine.autoGrader().finishingCurrentThread();
 
-	Lib.assertTrue(toBeDestroyed == null);
-	toBeDestroyed = currentThread;
+        Lib.assertTrue(toBeDestroyed == null);
+        toBeDestroyed = currentThread;
 
-
-	currentThread.status = statusFinished;
-	
-	sleep();
+        currentThread.status = statusFinished;
+        
+        sleep();
     }
 
     /**
@@ -277,10 +285,23 @@ public class KThread {
      * thread.
      */
     public void join() {
-	Lib.debug(dbgThread, "Joining to thread: " + toString());
+        Lib.debug(dbgThread, "Joining to thread: " + toString());
 
-	Lib.assertTrue(this != currentThread);
-        // add code here!
+        Lib.assertTrue(this != currentThread);
+
+        // if thread has already finished, return immediately
+        if (status == statusFinished)
+            return;
+
+        boolean intStatus = Machine.interrupt().disable();
+
+        if (this.status != statusFinished) {
+            joinQueue.waitForAccess(currentThread);
+
+            KThread.sleep();
+        }
+
+        Machine.interrupt().restore(intStatus);
     }
 
     /**
@@ -448,4 +469,5 @@ public class KThread {
     private static KThread currentThread = null;
     private static KThread toBeDestroyed = null;
     private static KThread idleThread = null;
+    private ThreadQueue joinQueue = null;
 }
